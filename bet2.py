@@ -3,7 +3,6 @@ import requests
 import pandas as pd
 import datetime
 import time
-import textwrap  # <--- NEW IMPORT TO FIX THE INDENTATION BUG
 
 # --- 1. CONFIGURATION & STYLE ---
 st.set_page_config(
@@ -13,16 +12,18 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Apple-like CSS: Minimalist, rounded, clean typography
-# Added 'color: #1d1d1f' to body to ensure text is visible even if user is in Dark Mode
+# --- CSS STYLING ---
 st.markdown("""
     <style>
-    /* Force Light Theme colors for the card design to work consistently */
+    /* Force Light Theme Backgrounds */
     [data-testid="stAppViewContainer"] {
         background-color: #f5f5f7;
     }
     [data-testid="stSidebar"] {
         background-color: #ffffff;
+    }
+    [data-testid="stHeader"] {
+        background-color: rgba(0,0,0,0);
     }
     
     /* Card Container */
@@ -33,33 +34,26 @@ st.markdown("""
         box-shadow: 0 4px 12px rgba(0,0,0,0.05);
         margin-bottom: 20px;
         border: 1px solid #e1e1e6;
-        transition: transform 0.2s;
-        color: #1d1d1f; /* Force dark text inside card */
-    }
-    .signal-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+        color: #1d1d1f; /* Force dark text */
     }
     
-    /* Headers */
-    h1, h2, h3 {
-        color: #1d1d1f !important;
+    /* Text Styles */
+    h1, h2, h3, h4, p, li, span, div {
+        color: #1d1d1f;
         font-family: -apple-system, BlinkMacSystemFont, sans-serif;
     }
     
-    /* Metric Text */
     .metric-label {
-        font-size: 12px;
-        color: #86868b;
+        font-size: 11px;
+        color: #86868b !important;
         text-transform: uppercase;
         letter-spacing: 0.5px;
         font-weight: 600;
     }
     
-    /* High Confidence Badge */
     .badge-high {
         background-color: #34c759;
-        color: white;
+        color: white !important;
         padding: 4px 10px;
         border-radius: 12px;
         font-size: 11px;
@@ -67,10 +61,9 @@ st.markdown("""
         text-transform: uppercase;
     }
     
-    /* Medium Confidence Badge */
     .badge-med {
         background-color: #ff9f0a;
-        color: white;
+        color: white !important;
         padding: 4px 10px;
         border-radius: 12px;
         font-size: 11px;
@@ -80,8 +73,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. BACKEND ENGINE (CACHED) ---
+# --- 2. HELPER FUNCTION TO FIX THE BUG ---
+def clean_html(html_str):
+    """Removes newlines and extra spaces to prevent Markdown from seeing code blocks."""
+    return " ".join(html_str.split())
 
+# --- 3. BACKEND ENGINE ---
 LEAGUES = {
     'Premier League': 'PL',
     'La Liga': 'PD',
@@ -97,10 +94,8 @@ class BettingSignalEngine:
         self.request_timestamps = []
 
     def _rate_limit(self):
-        """Strict 10 req/min limit handling."""
         now = time.time()
         self.request_timestamps = [t for t in self.request_timestamps if now - t < 60]
-        
         if len(self.request_timestamps) >= 10:
             sleep_time = 61 - (now - self.request_timestamps[0])
             if sleep_time > 0:
@@ -127,17 +122,15 @@ class BettingSignalEngine:
     def get_standings(self, league_code):
         data = self._fetch(f"competitions/{league_code}/standings")
         if not data: return pd.DataFrame()
-        
         teams = {}
         for table in data.get('standings', []):
-            t_type = table['type'] # TOTAL, HOME, AWAY
+            t_type = table['type']
             for row in table['table']:
                 t_name = row['team']['name']
                 if t_name not in teams: teams[t_name] = {}
                 teams[t_name][f'{t_type}_rank'] = row['position']
                 teams[t_name][f'{t_type}_form'] = row.get('form', '')
         
-        # Add league size for Bottom 5 logic
         total_teams = len(teams)
         for t in teams: teams[t]['league_size'] = total_teams
         return pd.DataFrame.from_dict(teams, orient='index')
@@ -155,13 +148,13 @@ class BettingSignalEngine:
         h_stats, a_stats = standings.loc[home], standings.loc[away]
         signals, reasons, score = [], [], 0
 
-        # Criteria 1: Top 4 Home vs Bottom 5 Away
+        # Criteria 1: Top 4 vs Bottom 5
         if h_stats['TOTAL_rank'] <= 4 and a_stats['TOTAL_rank'] >= (h_stats['league_size'] - 4):
             signals.append("Mismatch")
             score += 40
             reasons.append(f"🏰 **Mismatch:** {home} (Rank {h_stats['TOTAL_rank']}) vs {away} (Rank {a_stats['TOTAL_rank']})")
 
-        # Criteria 2: Home Fortress (Home Win > 80% recent)
+        # Criteria 2: Home Fortress
         h_form = h_stats.get('HOME_form', '') or ''
         h_games = h_form.replace(',', '')[-5:]
         if len(h_games) >= 3:
@@ -171,7 +164,7 @@ class BettingSignalEngine:
                 score += 30
                 reasons.append(f"🔥 **Home Form:** {home} has won {int(win_pct)}% of recent home games.")
 
-        # Criteria 3: Away Weakness (Away Loss > 80% recent)
+        # Criteria 3: Away Weakness
         a_form = a_stats.get('AWAY_form', '') or ''
         a_games = a_form.replace(',', '')[-5:]
         if len(a_games) >= 3:
@@ -193,27 +186,17 @@ class BettingSignalEngine:
             }
         return None
 
-# --- 3. UI LAYOUT ---
+# --- 4. UI LAYOUT ---
 
-# Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
-    api_key = st.text_input("API Key", type="password", help="Get one for free at football-data.org")
-    
+    api_key = st.text_input("API Key", type="password")
     st.divider()
-    
-    selected_leagues = st.multiselect(
-        "Select Leagues", 
-        list(LEAGUES.keys()), 
-        default=list(LEAGUES.keys())
-    )
-    
+    selected_leagues = st.multiselect("Select Leagues", list(LEAGUES.keys()), default=list(LEAGUES.keys()))
     run_btn = st.button("🔍 Find Signals", type="primary", use_container_width=True)
-    
     st.markdown("---")
-    st.markdown("*Only Top 4 vs Bottom 5 or extreme form disparities are flagged.*")
+    st.markdown("*Analysis covers next 7 days.*")
 
-# Main Content
 st.title("BetSignal Pro")
 st.markdown("### AI-Driven Sports Analytics Engine")
 
@@ -226,23 +209,18 @@ if run_btn:
         engine = BettingSignalEngine(api_key)
         all_signals = []
         
-        # Progress Bar
         progress_text = "Scanning Leagues..."
         my_bar = st.progress(0, text=progress_text)
-        
         total_steps = len(selected_leagues)
         
         for idx, league_name in enumerate(selected_leagues):
             code = LEAGUES[league_name]
             my_bar.progress((idx / total_steps), text=f"Analyzing {league_name}...")
             
-            # Fetch Data
             standings = engine.get_standings(code)
             if standings.empty: continue
-            
             matches = engine.get_matches(code)
             
-            # Analyze
             for match in matches:
                 if match['status'] != 'FINISHED':
                     res = engine.analyze(match, standings, league_name)
@@ -252,13 +230,10 @@ if run_btn:
         time.sleep(0.5)
         my_bar.empty()
 
-        # --- RESULTS DISPLAY ---
         if not all_signals:
             st.info("✅ No high-risk signals found for the upcoming week.")
         else:
-            # Sort by confidence
             all_signals.sort(key=lambda x: x['score'], reverse=True)
-            
             st.markdown(f"Found **{len(all_signals)}** high-value signals.")
             
             for signal in all_signals:
@@ -267,15 +242,16 @@ if run_btn:
                 badge_class = "badge-high" if score >= 80 else "badge-med"
                 badge_text = "HIGH PROB" if score >= 80 else "MODERATE"
                 
-                # --- THE FIX IS HERE ---
-                # using textwrap.dedent removes the indentation that was causing the code block issue
-                html_card = textwrap.dedent(f"""
+                # --- HTML CONSTRUCTION ---
+                reasons_html = "".join([f'<li style="margin-bottom:4px;">{r}</li>' for r in signal['reasons']])
+                
+                # We build the HTML as a clean F-string
+                raw_html = f"""
                 <div class="signal-card">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                         <span class="metric-label">📅 {signal['match_date']} • {signal['league']}</span>
                         <span class="{badge_class}">{badge_text}</span>
                     </div>
-                    
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
                         <div style="text-align:left; width:45%;">
                             <h2 style="margin:0; font-size:18px;">{signal['home']}</h2>
@@ -287,9 +263,7 @@ if run_btn:
                             <span class="metric-label">AWAY</span>
                         </div>
                     </div>
-                    
                     <hr style="border:0; border-top:1px solid #f0f0f5; margin:15px 0;">
-                    
                     <div style="margin-bottom:10px;">
                         <span class="metric-label">CONFIDENCE SCORE</span>
                         <div style="display:flex; align-items:center; margin-top:5px;">
@@ -299,22 +273,20 @@ if run_btn:
                             <span style="font-weight:bold; color:{score_color}; font-size:14px;">{score}%</span>
                         </div>
                     </div>
-                    
                     <div style="background-color:#f9f9fb; padding:10px; border-radius:10px;">
                         <ul style="margin:0; padding-left:20px; color:#424245; font-size:14px;">
-                            {''.join([f'<li style="margin-bottom:4px;">{r}</li>' for r in signal['reasons']])}
+                            {reasons_html}
                         </ul>
                     </div>
                 </div>
-                """)
+                """
                 
-                st.markdown(html_card, unsafe_allow_html=True)
-
+                # --- THE FIX: Clean the HTML string before rendering ---
+                st.markdown(clean_html(raw_html), unsafe_allow_html=True)
 else:
-    # Initial State Hero
     st.markdown("""
     <div style="text-align: center; padding: 50px; color: #86868b;">
         <h3>Ready to Analyze?</h3>
-        <p>Enter your API key in the sidebar and click "Find Signals" to scan the Top 5 European Leagues.</p>
+        <p>Enter your API key in the sidebar and click "Find Signals".</p>
     </div>
     """, unsafe_allow_html=True)
