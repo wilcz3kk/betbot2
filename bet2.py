@@ -4,7 +4,7 @@ import pandas as pd
 import datetime
 import time
 
-# --- 1. CONFIGURATION & STYLE ---
+# --- 1. KONFIGURACJA I STYL (APPLE-LIKE) ---
 st.set_page_config(
     page_title="BetSignal Pro",
     page_icon="⚽",
@@ -12,79 +12,77 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CSS STYLING ---
+# Wymuszamy jasny motyw i czysty styl
 st.markdown("""
     <style>
-    /* Force Light Theme Backgrounds */
-    [data-testid="stAppViewContainer"] {
-        background-color: #f5f5f7;
-    }
-    [data-testid="stSidebar"] {
-        background-color: #ffffff;
-    }
-    [data-testid="stHeader"] {
-        background-color: rgba(0,0,0,0);
-    }
+    /* Reset tła */
+    [data-testid="stAppViewContainer"] { background-color: #f5f5f7; }
+    [data-testid="stSidebar"] { background-color: #ffffff; }
+    [data-testid="stHeader"] { background-color: rgba(0,0,0,0); }
     
-    /* Card Container */
+    /* Karty meczowe */
     .signal-card {
         background-color: #ffffff;
-        padding: 20px;
-        border-radius: 18px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        margin-bottom: 20px;
-        border: 1px solid #e1e1e6;
-        color: #1d1d1f; /* Force dark text */
+        padding: 24px;
+        border-radius: 20px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+        margin-bottom: 24px;
+        border: 1px solid #e5e5ea;
+        color: #1d1d1f;
     }
     
-    /* Text Styles */
-    h1, h2, h3, h4, p, li, span, div {
+    /* Typografia */
+    h1, h2, h3, p, span, div, li {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         color: #1d1d1f;
-        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
     }
     
     .metric-label {
         font-size: 11px;
         color: #86868b !important;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.8px;
         font-weight: 600;
+        margin-top: 4px;
+        display: block;
     }
     
-    .badge-high {
-        background-color: #34c759;
-        color: white !important;
-        padding: 4px 10px;
-        border-radius: 12px;
+    .team-name {
+        font-size: 18px;
+        font-weight: 700;
+        margin: 0;
+        line-height: 1.2;
+    }
+    
+    /* Badges */
+    .badge {
+        padding: 6px 12px;
+        border-radius: 100px;
         font-size: 11px;
         font-weight: 700;
         text-transform: uppercase;
-    }
-    
-    .badge-med {
-        background-color: #ff9f0a;
+        letter-spacing: 0.5px;
         color: white !important;
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-size: 11px;
-        font-weight: 700;
-        text-transform: uppercase;
     }
+    .bg-green { background-color: #34c759; }
+    .bg-yellow { background-color: #ff9f0a; }
+    .bg-blue { background-color: #007aff; }
+    
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. HELPER FUNCTION TO FIX THE BUG ---
+# --- 2. FUNKCJE POMOCNICZE ---
 def clean_html(html_str):
-    """Removes newlines and extra spaces to prevent Markdown from seeing code blocks."""
-    return " ".join(html_str.split())
+    """Usuwa znaki nowej linii, aby Markdown nie psuł renderowania HTML."""
+    return html_str.replace("\n", "").replace("    ", " ")
 
-# --- 3. BACKEND ENGINE ---
+# --- 3. SILNIK ANALITYCZNY ---
 LEAGUES = {
-    'Premier League': 'PL',
-    'La Liga': 'PD',
-    'Bundesliga': 'BL1',
-    'Serie A': 'SA',
-    'Ligue 1': 'FL1'
+    'Premier League (ANG)': 'PL',
+    'La Liga (HIS)': 'PD',
+    'Bundesliga (NIEM)': 'BL1',
+    'Serie A (WŁO)': 'SA',
+    'Ligue 1 (FRA)': 'FL1'
 }
 
 class BettingSignalEngine:
@@ -94,12 +92,13 @@ class BettingSignalEngine:
         self.request_timestamps = []
 
     def _rate_limit(self):
+        """Ochrona przed limitem 10 zapytań/minutę."""
         now = time.time()
         self.request_timestamps = [t for t in self.request_timestamps if now - t < 60]
-        if len(self.request_timestamps) >= 10:
+        if len(self.request_timestamps) >= 9: # Zapas bezpieczeństwa
             sleep_time = 61 - (now - self.request_timestamps[0])
             if sleep_time > 0:
-                with st.spinner(f"⏳ API Rate Limit Safety: Pausing for {int(sleep_time)}s..."):
+                with st.spinner(f"⏳ Oczekiwanie na API (Limit darmowy)... {int(sleep_time)}s"):
                     time.sleep(sleep_time)
                 self.request_timestamps = []
         self.request_timestamps.append(time.time())
@@ -111,182 +110,222 @@ class BettingSignalEngine:
             if response.status_code == 200:
                 return response.json()
             elif response.status_code == 429:
-                st.error("API Limit Hit. Please wait a minute.")
-            elif response.status_code == 403:
-                st.error("Invalid API Key.")
+                st.toast("⚠️ Przekroczono limit API. Czekam...")
+                time.sleep(10) # Krótka pauza i ponowienie
+                return self._fetch(endpoint)
             return None
-        except Exception as e:
-            st.error(f"Connection Error: {e}")
+        except:
             return None
 
     def get_standings(self, league_code):
         data = self._fetch(f"competitions/{league_code}/standings")
         if not data: return pd.DataFrame()
+        
         teams = {}
         for table in data.get('standings', []):
-            t_type = table['type']
-            for row in table['table']:
-                t_name = row['team']['name']
-                if t_name not in teams: teams[t_name] = {}
-                teams[t_name][f'{t_type}_rank'] = row['position']
-                teams[t_name][f'{t_type}_form'] = row.get('form', '')
-        
-        total_teams = len(teams)
-        for t in teams: teams[t]['league_size'] = total_teams
+            if table['type'] == 'TOTAL':
+                for row in table['table']:
+                    t_name = row['team']['name']
+                    form_str = row.get('form', '') # np. "W,L,W,D,L"
+                    if form_str: form_str = form_str.replace(',', '')
+                    
+                    teams[t_name] = {
+                        'rank': row['position'],
+                        'points': row['points'],
+                        'played': row['playedGames'],
+                        'form': form_str, # String np "WLWDL"
+                        'goal_diff': row['goalDifference']
+                    }
         return pd.DataFrame.from_dict(teams, orient='index')
 
     def get_matches(self, league_code):
         today = datetime.datetime.now().strftime("%Y-%m-%d")
-        future = (datetime.datetime.now() + datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+        future = (datetime.datetime.now() + datetime.timedelta(days=5)).strftime("%Y-%m-%d")
         data = self._fetch(f"competitions/{league_code}/matches?dateFrom={today}&dateTo={future}")
         return data.get('matches', []) if data else []
 
-    def analyze(self, match, standings, league_name):
-        home, away = match['homeTeam']['name'], match['awayTeam']['name']
+    def calculate_form_points(self, form_str):
+        """Zamienia string formy (np. 'WWDL') na punkty (max 15)."""
+        if not form_str: return 0
+        points = 0
+        for char in form_str[-5:]: # Ostatnie 5 meczy
+            if char == 'W': points += 3
+            elif char == 'D': points += 1
+        return points
+
+    def analyze_match_strength(self, match, standings, league_name):
+        home = match['homeTeam']['name']
+        away = match['awayTeam']['name']
+        
         if home not in standings.index or away not in standings.index: return None
         
-        h_stats, a_stats = standings.loc[home], standings.loc[away]
-        signals, reasons, score = [], [], 0
+        h_stats = standings.loc[home]
+        a_stats = standings.loc[away]
+        
+        # --- NOWY ALGORYTM PUNKTACJI (0-100) ---
+        score = 50 # Baza (mecz wyrównany)
+        reasons = []
+        
+        # 1. Różnica w tabeli (Im większa różnica rankingu na korzyść gospodarza, tym lepiej)
+        rank_diff = a_stats['rank'] - h_stats['rank'] # Np. Away(18) - Home(2) = +16 (Dobrze dla Home)
+        score += (rank_diff * 1.5)
+        
+        if rank_diff > 10: reasons.append(f"📈 **Przepaść w tabeli:** {home} jest o {rank_diff} miejsc wyżej.")
+        if rank_diff < -10: reasons.append(f"📉 **Przepaść w tabeli:** {away} jest o {abs(rank_diff)} miejsc wyżej.")
 
-        # Criteria 1: Top 4 vs Bottom 5
-        if h_stats['TOTAL_rank'] <= 4 and a_stats['TOTAL_rank'] >= (h_stats['league_size'] - 4):
-            signals.append("Mismatch")
-            score += 40
-            reasons.append(f"🏰 **Mismatch:** {home} (Rank {h_stats['TOTAL_rank']}) vs {away} (Rank {a_stats['TOTAL_rank']})")
+        # 2. Różnica punktowa (Siła ogólna)
+        pts_diff = h_stats['points'] - a_stats['points']
+        score += (pts_diff * 0.5)
 
-        # Criteria 2: Home Fortress
-        h_form = h_stats.get('HOME_form', '') or ''
-        h_games = h_form.replace(',', '')[-5:]
-        if len(h_games) >= 3:
-            win_pct = (h_games.count('W') / len(h_games)) * 100
-            if win_pct >= 80:
-                signals.append("Fortress")
-                score += 30
-                reasons.append(f"🔥 **Home Form:** {home} has won {int(win_pct)}% of recent home games.")
+        # 3. Aktualna forma (Ostatnie 5 meczy)
+        h_form_pts = self.calculate_form_points(h_stats['form'])
+        a_form_pts = self.calculate_form_points(a_stats['form'])
+        form_diff = h_form_pts - a_form_pts # Max różnica to +/- 15
+        
+        score += (form_diff * 2.0)
+        
+        if h_form_pts >= 12: reasons.append(f"🔥 **Super forma:** {home} (Ostatnie 5: {h_stats['form']})")
+        if a_form_pts <= 2: reasons.append(f"❄️ **Kryzys:** {away} (Ostatnie 5: {a_stats['form']})")
+        
+        # 4. Atut własnego boiska (stały bonus)
+        score += 5 
 
-        # Criteria 3: Away Weakness
-        a_form = a_stats.get('AWAY_form', '') or ''
-        a_games = a_form.replace(',', '')[-5:]
-        if len(a_games) >= 3:
-            loss_pct = (a_games.count('L') / len(a_games)) * 100
-            if loss_pct >= 80:
-                signals.append("Weak Away")
-                score += 30
-                reasons.append(f"❄️ **Away Slump:** {away} has lost {int(loss_pct)}% of recent away games.")
+        # Normalizacja do zakresu 0-100
+        final_score = max(min(int(score), 99), 1)
+        
+        # Ustalenie typu sygnału
+        if final_score > 60:
+            type_label = "HOME WIN"
+            color = "green"
+        elif final_score < 40:
+            type_label = "AWAY WIN" 
+            final_score = 100 - final_score # Odwracamy skalę dla gości, żeby pokazać "siłę zakładu"
+            color = "blue"
+        else:
+            type_label = "REMIS / RYZYKO"
+            color = "yellow"
 
-        if signals:
-            return {
-                "match_date": match['utcDate'][:10],
-                "league": league_name,
-                "home": home,
-                "away": away,
-                "score": min(score + 10, 100),
-                "reasons": reasons,
-                "signal_type": signals
-            }
-        return None
+        # Dodatkowa analiza dla użytkownika
+        return {
+            "date": match['utcDate'][:10],
+            "time": match['utcDate'][11:16],
+            "league": league_name,
+            "home": home,
+            "away": away,
+            "score": final_score,
+            "raw_score": score, # Do debugowania
+            "type": type_label,
+            "color": color,
+            "reasons": reasons[:3] # Max 3 powody
+        }
 
-# --- 4. UI LAYOUT ---
+# --- 4. INTERFEJS UŻYTKOWNIKA ---
 
 with st.sidebar:
-    st.header("⚙️ Configuration")
-    api_key = st.text_input("API Key", type="password")
+    st.header("⚙️ Ustawienia")
+    api_key = st.text_input("Klucz API", type="password", help="Football-Data.org")
     st.divider()
-    selected_leagues = st.multiselect("Select Leagues", list(LEAGUES.keys()), default=list(LEAGUES.keys()))
-    run_btn = st.button("🔍 Find Signals", type="primary", use_container_width=True)
-    st.markdown("---")
-    st.markdown("*Analysis covers next 7 days.*")
+    selected_leagues = st.multiselect("Wybierz ligi", list(LEAGUES.keys()), default=list(LEAGUES.keys())[:3])
+    run_btn = st.button("🚀 Pokaż najlepsze typy", type="primary", use_container_width=True)
 
-st.title("BetSignal Pro")
-st.markdown("### AI-Driven Sports Analytics Engine")
+st.title("BetSignal Pro v2")
+st.markdown("### Algorytm Rankingowy")
+st.info("💡 System teraz ocenia KAŻDY mecz i pokazuje ranking spotkań z największą przewagą statystyczną.")
 
 if run_btn:
     if not api_key:
-        st.warning("⚠️ Please enter your API Key in the sidebar.")
-    elif not selected_leagues:
-        st.warning("⚠️ Please select at least one league.")
+        st.error("Wprowadź klucz API w pasku bocznym.")
     else:
         engine = BettingSignalEngine(api_key)
-        all_signals = []
+        all_matches_ranked = []
         
-        progress_text = "Scanning Leagues..."
-        my_bar = st.progress(0, text=progress_text)
-        total_steps = len(selected_leagues)
+        # Pasek postępu
+        prog_bar = st.progress(0)
+        status_text = st.empty()
         
-        for idx, league_name in enumerate(selected_leagues):
-            code = LEAGUES[league_name]
-            my_bar.progress((idx / total_steps), text=f"Analyzing {league_name}...")
-            
-            standings = engine.get_standings(code)
-            if standings.empty: continue
-            matches = engine.get_matches(code)
-            
-            for match in matches:
-                if match['status'] != 'FINISHED':
-                    res = engine.analyze(match, standings, league_name)
-                    if res: all_signals.append(res)
+        for i, (l_name, l_code) in enumerate(LEAGUES.items()):
+            if l_name in selected_leagues:
+                status_text.text(f"Analizuję: {l_name}...")
+                prog_bar.progress((i + 1) / len(LEAGUES))
+                
+                standings = engine.get_standings(l_code)
+                matches = engine.get_matches(l_code)
+                
+                for m in matches:
+                    if m['status'] == 'TIMED' or m['status'] == 'SCHEDULED':
+                        res = engine.analyze_match_strength(m, standings, l_name)
+                        if res: all_matches_ranked.append(res)
         
-        my_bar.progress(1.0, text="Analysis Complete!")
-        time.sleep(0.5)
-        my_bar.empty()
-
-        if not all_signals:
-            st.info("✅ No high-risk signals found for the upcoming week.")
+        prog_bar.empty()
+        status_text.empty()
+        
+        # SORTOWANIE: Najlepsze zakłady (najwyższe Score) na górze
+        all_matches_ranked.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Wyświetlamy TOP 10 lub wszystkie jeśli mniej
+        top_picks = all_matches_ranked
+        
+        if not top_picks:
+            st.warning("Brak nadchodzących meczów w wybranych ligach (lub przerwa w rozgrywkach).")
         else:
-            all_signals.sort(key=lambda x: x['score'], reverse=True)
-            st.markdown(f"Found **{len(all_signals)}** high-value signals.")
+            st.success(f"Przeanalizowano mecze. Oto ranking najlepszych okazji:")
             
-            for signal in all_signals:
-                score = signal['score']
-                score_color = "#34c759" if score >= 80 else "#ff9f0a"
-                badge_class = "badge-high" if score >= 80 else "badge-med"
-                badge_text = "HIGH PROB" if score >= 80 else "MODERATE"
+            for match in top_picks:
+                # Kolory i badge
+                if match['color'] == 'green': 
+                    badge_class = 'bg-green'
+                    bar_color = '#34c759'
+                elif match['color'] == 'blue': 
+                    badge_class = 'bg-blue'
+                    bar_color = '#007aff'
+                else: 
+                    badge_class = 'bg-yellow'
+                    bar_color = '#ff9f0a'
+
+                reasons_html = "".join([f'<li style="margin-bottom:4px; font-size:13px; color:#424245;">{r}</li>' for r in match['reasons']])
                 
-                # --- HTML CONSTRUCTION ---
-                reasons_html = "".join([f'<li style="margin-bottom:4px;">{r}</li>' for r in signal['reasons']])
-                
-                # We build the HTML as a clean F-string
-                raw_html = f"""
+                # Budujemy HTML w jednej linii (dla pewności)
+                html_content = f"""
                 <div class="signal-card">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                        <span class="metric-label">📅 {signal['match_date']} • {signal['league']}</span>
-                        <span class="{badge_class}">{badge_text}</span>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <span class="metric-label">📅 {match['date']} {match['time']} • {match['league']}</span>
+                        <span class="badge {badge_class}">{match['type']}</span>
                     </div>
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                        <div style="text-align:left; width:45%;">
-                            <h2 style="margin:0; font-size:18px;">{signal['home']}</h2>
-                            <span class="metric-label">HOME</span>
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="width:40%; text-align:left;">
+                            <p class="team-name">{match['home']}</p>
+                            <span class="metric-label">Gospodarz</span>
                         </div>
-                        <div style="text-align:center; font-size:20px; color:#86868b;">VS</div>
-                        <div style="text-align:right; width:45%;">
-                            <h2 style="margin:0; font-size:18px;">{signal['away']}</h2>
-                            <span class="metric-label">AWAY</span>
-                        </div>
-                    </div>
-                    <hr style="border:0; border-top:1px solid #f0f0f5; margin:15px 0;">
-                    <div style="margin-bottom:10px;">
-                        <span class="metric-label">CONFIDENCE SCORE</span>
-                        <div style="display:flex; align-items:center; margin-top:5px;">
-                            <div style="flex-grow:1; background-color:#e1e1e6; height:6px; border-radius:3px; margin-right:10px;">
-                                <div style="width:{score}%; background-color:{score_color}; height:6px; border-radius:3px;"></div>
-                            </div>
-                            <span style="font-weight:bold; color:{score_color}; font-size:14px;">{score}%</span>
+                        <div style="font-weight:bold; color:#d1d1d6; font-size:18px;">VS</div>
+                        <div style="width:40%; text-align:right;">
+                            <p class="team-name">{match['away']}</p>
+                            <span class="metric-label">Gość</span>
                         </div>
                     </div>
-                    <div style="background-color:#f9f9fb; padding:10px; border-radius:10px;">
-                        <ul style="margin:0; padding-left:20px; color:#424245; font-size:14px;">
+                    <div style="margin-top:20px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
+                            <span class="metric-label">SIŁA SYGNAŁU</span>
+                            <span style="font-weight:700; color:{bar_color};">{match['score']}%</span>
+                        </div>
+                        <div style="width:100%; background-color:#f0f0f5; height:8px; border-radius:4px; overflow:hidden;">
+                            <div style="width:{match['score']}%; background-color:{bar_color}; height:100%; border-radius:4px;"></div>
+                        </div>
+                    </div>
+                    <div style="margin-top:15px; background-color:#f9f9fb; padding:12px; border-radius:12px;">
+                        <ul style="margin:0; padding-left:20px;">
                             {reasons_html}
                         </ul>
                     </div>
                 </div>
                 """
                 
-                # --- THE FIX: Clean the HTML string before rendering ---
-                st.markdown(clean_html(raw_html), unsafe_allow_html=True)
+                # Renderowanie
+                st.markdown(clean_html(html_content), unsafe_allow_html=True)
+
 else:
     st.markdown("""
-    <div style="text-align: center; padding: 50px; color: #86868b;">
-        <h3>Ready to Analyze?</h3>
-        <p>Enter your API key in the sidebar and click "Find Signals".</p>
+    <div style="text-align: center; margin-top: 50px; opacity: 0.6;">
+        <h3 style="color:#1d1d1f">Czekam na start...</h3>
+        <p>Wprowadź klucz API i kliknij przycisk, aby przeskanować rynek.</p>
     </div>
     """, unsafe_allow_html=True)
